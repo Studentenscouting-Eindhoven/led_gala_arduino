@@ -1,7 +1,8 @@
 #include <Adafruit_NeoPixel.h>
 
-// hardware constants
+// Program constants
 #define ANALOGUE_MAX 1023
+#define TIMESTEP 100
 
 // pin configurations
 #define MQ3_PIN 14 // alcohol sensor on analogue in pin 0
@@ -17,6 +18,7 @@
 #define GREEN_LED 10 // number of green LED's
 #define YELLOW_LED 10 // number of yellow LED's
 #define RED_LED 10 // number of red LED's
+#define TOTAL_LED GREEN_LED+YELLOW_LED+RED_LED
 
 struct alcohol_meter{
   float baseline_ppm;
@@ -26,7 +28,13 @@ struct alcohol_meter{
 
 alcohol_meter am = {0.0f, 0.0f, 1.0f};
 
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(50, LEDSTRIP_PIN, NEO_BRG+NEO_KHZ400);
+// Parameter 1 = number of LEDs in the strip
+// Parameter 2 = Pin number
+// Parameter 3 = RGB LED flags, combine when needed:
+//   NEO_KHZ800         800 KHz bitstream (mosr NeoPixel products with WS2812 LEDs)
+//   NEO_KHZ400         400 KHz (Classic 'v1' (not v2) FLORA pixels, WS2811 drivers)
+//   NEO_{RGB/BGR/GRB}  RGB LED bitstream order
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(TOTAL_LED, LEDSTRIP_PIN, NEO_BRG+NEO_KHZ400);
 
 void update_alcoholmeter(alcohol_meter* am) {
   // obtain new measurement
@@ -38,10 +46,35 @@ void update_alcoholmeter(alcohol_meter* am) {
   am->tuning_factor = analogRead(POT_PIN) / (float) ANALOGUE_MAX * (float) MAX_GAIN_POTMETER;
 }
 
-void set_led_strip(){
-
+void set_led_strip(Adafruit_NeoPixel* strip, alcohol_meter* am){
+  // calculate number of pixels to turn on
+  float fraction_meas = (am->measured_ppm - am->baseline_ppm)/((float) ANALOGUE_MAX - am->baseline_ppm);
+  fraction_meas *= am->tuning_factor;
+  uint8_t num_pixels = max(floor(fraction_meas * (TOTAL_LED)), TOTAL_LED);
+  // turn on correct amount of pixels in correct color
+  uint32_t pixelcolor;
+  for(uint8_t idx=0; idx < num_pixels; ++idx){
+    switch (idx)
+    {
+    case 0 ... RED_LED:
+      pixelcolor = strip->Color(255, 0, 0);
+      break;
+    case RED_LED + 1 ... RED_LED + YELLOW_LED:
+      pixelcolor = strip->Color(255, 255, 0);
+      break;
+    case RED_LED + YELLOW_LED + 1 ... TOTAL_LED:
+      pixelcolor = strip->Color(0, 255, 0);
+      break;
+    default: // default to off/black pixel
+      pixelcolor = strip->Color(0, 0, 0);
+      break;
+    }
+    strip->setPixelColor(idx, pixelcolor);
+  }
+  strip->fill();
 }
 
+// Arduino does not seem to support floats in sprintf, store in char arrays first
 void print_to_serial(alcohol_meter* am){
   char buffer[50];
   char base[8];
@@ -68,5 +101,6 @@ void loop() {
   // put your main code here, to run repeatedly:
   update_alcoholmeter(&am);
   print_to_serial(&am);
-  delay(1000);
+  set_led_strip(&strip, &am);
+  delay(TIMESTEP);
 }
