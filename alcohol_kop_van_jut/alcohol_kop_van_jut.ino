@@ -19,14 +19,18 @@
 #define YELLOW_LED 10 // number of yellow LED's
 #define RED_LED 10 // number of red LED's
 #define TOTAL_LED GREEN_LED+YELLOW_LED+RED_LED
+#define LED_ON_TIME 2500 // [ms] time the leds stay on maximum
 
 struct alcohol_meter{
   float baseline_ppm;
   float measured_ppm;
   float tuning_factor;
+  float current_max_frac;
 };
 
-alcohol_meter am = {0.0f, 0.0f, 1.0f};
+uint16_t led_on_counter = 0;
+
+alcohol_meter am = {0.0f, 0.0f, 1.0f, 0.0f};
 
 // Parameter 1 = number of LEDs in the strip
 // Parameter 2 = Pin number
@@ -46,11 +50,29 @@ void update_alcoholmeter(alcohol_meter* am) {
   am->tuning_factor = analogRead(POT_PIN) / (float) ANALOGUE_MAX * (float) MAX_GAIN_POTMETER;
 }
 
-void set_led_strip(Adafruit_NeoPixel* strip, alcohol_meter* am){
-  // calculate number of pixels to turn on
+// calculate number of pixels to turn on
+uint8_t determine_level(alcohol_meter* am){
+  // peak detection
   float fraction_meas = (am->measured_ppm - am->baseline_ppm)/((float) ANALOGUE_MAX - am->baseline_ppm);
   fraction_meas *= am->tuning_factor;
-  uint8_t num_pixels = max(floor(fraction_meas * (TOTAL_LED)), TOTAL_LED);
+  uint8_t num_pixels = 0;
+  if (fraction_meas > 0.05f){// dead zone of 5%
+    am->current_max_frac = max(fraction_meas, am->current_max_frac); // update maximum
+    num_pixels = max(floor(am->current_max_frac * (TOTAL_LED)), TOTAL_LED); // set maximum leds
+    led_on_counter = LED_ON_TIME;
+  }else if (led_on_counter > 0){ // keep maximum on after stopping
+    led_on_counter -= TIMESTEP;
+    num_pixels = max(floor(am->current_max_frac * (TOTAL_LED)), TOTAL_LED); // set maximum leds
+  }else{ // off mode
+    led_on_counter = 0;
+    num_pixels = 0;
+  }
+  return num_pixels;
+}
+
+void update_led_strip(Adafruit_NeoPixel* strip, const uint8_t num_pixels){
+  // set all to off at start
+  strip->fill(0U);
   // turn on correct amount of pixels in correct color
   uint32_t pixelcolor;
   for(uint8_t idx=0; idx < num_pixels; ++idx){
@@ -101,6 +123,6 @@ void loop() {
   // put your main code here, to run repeatedly:
   update_alcoholmeter(&am);
   print_to_serial(&am);
-  set_led_strip(&strip, &am);
+  update_led_strip(&strip, determine_level(&am));
   delay(TIMESTEP);
 }
